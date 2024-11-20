@@ -4,11 +4,11 @@ A FOSS Polysomnography Platform For Sleep Research.
 
 ## Philosophy
 
-* Cost is Critical (off-the-shelf, commodity components wherever possible).
-* Less is More (if one sensor can do the job of two, use it).
-* Easy to Use (no complex prep work).
-* Open Source (hardware and software).
-* Open Data (no proprietary formats).
+* **Cost is Critical** (off-the-shelf, commodity components).
+* **Less is More** (if one sensor can do the job of two, use it).
+* **Easy to Use** (no complex setup/prep work).
+* **Open Source** (hardware and software).
+* **Open Data** (no proprietary formats).
 
 ## Disclaimer
 
