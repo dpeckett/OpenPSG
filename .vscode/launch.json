@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "preLaunchTask": "${defaultBuildTask}",
+        "type": "probe-rs-debug",
+        "request": "launch",
+        "name": "probe-rs Debugging ",
+        "flashingConfig": {
+          "flashingEnabled": true,
+        },
+        "chip": "STM32F746ZGTx",
+        "wireProtocol": "Swd",
+        "speed": 1800,
+        "connectUnderReset": true,
+        "coreConfigs": [
+          {
+            "coreIndex": 0,
+            "programBinary": "${workspaceRoot}/target/thumbv7em-none-eabihf/debug/openpsg",
+            "rttEnabled": true,
+            "svdFile": "${workspaceRoot}/.vscode/STM32F746.svd",
+          }
+        ]
+      }
+    ]
+  }

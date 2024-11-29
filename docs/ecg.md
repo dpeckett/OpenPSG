@@ -27,7 +27,3 @@ Ultra-Low Power, Single-Channel Integrated Biopotential (ECG, R to R Detection) 
 #### ADS1115
 
 16-bit, 860-SPS, 4-channel, delta-sigma ADC with PGA, oscillator, VREF, comparator and I2C.
-
-#### CS1237
-
-24-bit, 1280-SPS, single-channel, delta-sigma ADC with PGA, internal oscillator, temperature sensor, and SPI interface.
