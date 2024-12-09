@@ -3,3 +3,6 @@ runner = "probe-rs run --chip STM32F746ZGTx --protocol swd --speed 1800"
 
 [build]
 target = "thumbv7em-none-eabihf"
+
+[env]
+DEFMT_LOG = "debug"
