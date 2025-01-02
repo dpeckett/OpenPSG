@@ -1,14 +1,14 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 
-use crate::cs1237_spi::{Config as Cs1237Config, Cs1237, SamplesPerSecond};
+use crate::api::RpcHandler;
 use crate::embassy_sntpc::{set_time, TimestampGen};
 use crate::net_util::generate_mac_address;
 use core::net::{IpAddr, SocketAddr};
 use core::option::Option::*;
 use core::result::Result::*;
-use defmt::{error, info, warn};
-use embassy_executor::Spawner;
+use defmt::{debug, error, info, warn};
+use embassy_executor::{SendSpawner, Spawner};
 use embassy_net::tcp::{Error as TcpReadError, TcpSocket};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{Stack, StackResources};
@@ -18,15 +18,13 @@ use embassy_stm32::peripherals::ETH;
 use embassy_stm32::rng::Rng;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, eth, peripherals, rng, Config};
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
-use embedded_jsonrpc::{RpcRequest, RpcServer, JSONRPC_VERSION};
-use heapless::Vec;
+use embedded_jsonrpc::RpcServer;
 use rand_core::RngCore;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
-mod cs1237_spi;
+mod api;
 mod embassy_sntpc;
 mod net_util;
 
@@ -50,7 +48,6 @@ async fn timesync_task(stack: Stack<'static>) -> ! {
     let timestamp_gen = TimestampGen::default();
     let context = sntpc::NtpContext::new(timestamp_gen);
 
-    // Create UDP socket with 2 NTP packets worth of buffer space.
     let mut rx_meta = [PacketMetadata::EMPTY; 1];
     let mut rx_buffer = [0; NTP_PACKET_SIZE];
     let mut tx_meta = [PacketMetadata::EMPTY; 1];
@@ -71,10 +68,10 @@ async fn timesync_task(stack: Stack<'static>) -> ! {
         panic!("Expected a gateway address");
     }
 
-    loop {
-        let addr = SocketAddr::new(IpAddr::V4(gateway.unwrap()), NTP_PORT);
+    let ntp_addr = SocketAddr::new(IpAddr::V4(gateway.unwrap()), NTP_PORT);
 
-        match sntpc::get_time(addr, &socket, context).await {
+    loop {
+        match sntpc::get_time(ntp_addr, &socket, context).await {
             Ok(time) => {
                 set_time(time);
 
@@ -158,19 +155,21 @@ async fn adc_sampling_task(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
+    debug!("Starting...");
+
     let mut config = Config::default();
     {
         use embassy_stm32::rcc::*;
         config.rcc.hse = Some(Hse {
-            freq: Hertz(8_000_000),
-            mode: HseMode::Bypass,
+            freq: Hertz(25_000_000),
+            mode: HseMode::Oscillator,
         });
         config.rcc.pll_src = PllSource::HSE;
         config.rcc.pll = Some(Pll {
-            prediv: PllPreDiv::DIV4,
-            mul: PllMul::MUL216,
-            divp: Some(PllPDiv::DIV2), // 8mhz / 4 * 216 / 2 = 216Mhz
-            divq: None,
+            prediv: PllPreDiv::DIV25,
+            mul: PllMul::MUL336,
+            divp: Some(PllPDiv::DIV2), // 25mhz / 25 * 336 / 2 = 168Mhz.
+            divq: Some(PllQDiv::DIV7), // 25mhz / 25 * 336 / 7 = 48Mhz.
             divr: None,
         });
         config.rcc.ahb_pre = AHBPrescaler::DIV1;
@@ -178,50 +177,63 @@ async fn main(spawner: Spawner) -> ! {
         config.rcc.apb2_pre = APBPrescaler::DIV2;
         config.rcc.sys = Sysclk::PLL1_P;
     }
-    let p = embassy_stm32::init(config);
+
+    debug!("Initializing clocks...");
+
+    let p = embassy_stm32::init(config); 
+
 
     // Initialize peripherals
     /*
-    static ADC: StaticCell<
-        Mutex<
-            ThreadModeRawMutex,
-            Cs1237<
-                'static,
-                peripherals::SPI1,
-                peripherals::DMA2_CH3,
-                peripherals::DMA2_CH2,
-                peripherals::PA6,
+        static ADC: StaticCell<
+            Mutex<
+                ThreadModeRawMutex,
+                Cs1237<
+                    'static,
+                    peripherals::SPI1,
+                    peripherals::DMA2_CH3,
+                    peripherals::DMA2_CH2,
+                    peripherals::PA6,
+                >,
             >,
-        >,
-    > = StaticCell::new();
+        > = StaticCell::new();
 
-    let mut adc_config = Cs1237Config::default();
-    adc_config.sample_rate = SamplesPerSecond::SPS640;
+        let mut adc_config = Cs1237Config::default();
+        adc_config.sample_rate = SamplesPerSecond::SPS640;
 
-    let adc = &*ADC.init(Mutex::new(
-        Cs1237::try_new(
-            p.SPI1, p.PA5, p.PA6, p.DMA2_CH3, p.DMA2_CH2, p.EXTI6, adc_config,
-        )
-        .await
-        .unwrap(),
-    ));
+        let adc = &*ADC.init(Mutex::new(
+            Cs1237::try_new(
+                p.SPI1, p.PA5, p.PA6, p.DMA2_CH3, p.DMA2_CH2, p.EXTI6, adc_config,
+            )
+            .await
+            .unwrap(),
+        ));
 
-    static SAMPLING_ENABLED: StaticCell<Mutex<ThreadModeRawMutex, bool>> = StaticCell::new();
-    let sampling_enabled = SAMPLING_ENABLED.init(Mutex::new(true));
+        static SAMPLING_ENABLED: StaticCell<Mutex<ThreadModeRawMutex, bool>> = StaticCell::new();
+        let sampling_enabled = SAMPLING_ENABLED.init(Mutex::new(true));
 
-    static CHUNK_SIZE: StaticCell<Mutex<ThreadModeRawMutex, usize>> = StaticCell::new();
-    let chunk_size = CHUNK_SIZE.init(Mutex::new(DEFAULT_ADC_CHUNK_SIZE));
-*/
-
+        static CHUNK_SIZE: StaticCell<Mutex<ThreadModeRawMutex, usize>> = StaticCell::new();
+        let chunk_size = CHUNK_SIZE.init(Mutex::new(DEFAULT_ADC_CHUNK_SIZE));
+    */
+    
     // Generate random seed.
+    debug!("Generating random ethernet seed...");
     let mut rng = Rng::new(p.RNG, Irqs);
     let mut seed = [0; 8];
     rng.fill_bytes(&mut seed);
     let seed = u64::from_le_bytes(seed);
 
-    static PACKETS: StaticCell<PacketQueue<16, 16>> = StaticCell::new();
+    // Initialize Ethernet device.
+    debug!("Initializing Ethernet device...");
+    let mac_addr = generate_mac_address();
+
+    static PACKETS: StaticCell<PacketQueue<4, 4>> = StaticCell::new();
+    let packet_queue = PACKETS.init(PacketQueue::<4, 4>::new());
+
+    debug!("Bringing up Ethernet device...");
+
     let device = Ethernet::new(
-        PACKETS.init(PacketQueue::<16, 16>::new()),
+        packet_queue,
         p.ETH,
         Irqs,
         p.PA1,
@@ -230,11 +242,11 @@ async fn main(spawner: Spawner) -> ! {
         p.PA7,
         p.PC4,
         p.PC5,
-        p.PG13,
+        p.PB12,
         p.PB13,
-        p.PG11,
-        GenericSMI::new(0),
-        generate_mac_address(),
+        p.PB11,
+        GenericSMI::new(1), // The default dp83848 address is "1" unlike the LAN8742 which is "0".
+        mac_addr,
     );
 
     // Acquire network configuration using DHCP.
@@ -251,17 +263,22 @@ async fn main(spawner: Spawner) -> ! {
     // Ensure DHCP configuration is up before trying connect
     stack.wait_config_up().await;
 
-    // Begin synchronizing time with SNTP server
-    spawner.spawn(timesync_task(stack.clone())).unwrap();
-
-    // Get the IP address that was assigned to us
-    let ip_addr = stack.config_v4().unwrap().address;
+    // Begin synchronizing time with NTP server.
+    spawner.spawn(timesync_task(stack)).unwrap();
 
     // Create JSON-RPC server
     static RPC_SERVER: StaticCell<RpcServer<'static, TcpReadError>> = StaticCell::new();
     let rpc_server = RPC_SERVER.init_with(RpcServer::new);
 
-    // Register handlers
+    // Register handlers.
+    static RPC_HANDLER: StaticCell<RpcHandler> = StaticCell::new();
+    let send_spawner = SendSpawner::for_current_executor().await;
+    let rpc_handler = RPC_HANDLER.init_with(|| RpcHandler::new(send_spawner));
+
+    rpc_server
+        .register_handler("openpsg.*", rpc_handler)
+        .unwrap();
+    
     /*
         static ADC_CONFIGURE_HANDLER: StaticCell<AdcHandler> = StaticCell::new();
         let adc_configure_handler = {
@@ -285,18 +302,16 @@ async fn main(spawner: Spawner) -> ! {
     )).unwrap();*/
 
     // Then we can use it!
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
+    let mut rx_buffer = [0; 128]; // Received commands are nice and small.
+    let mut tx_buffer = [0; 1460]; // One Ethernet frame worth of data.
 
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
         socket.set_keep_alive(Some(embassy_time::Duration::from_secs(5)));
 
-        info!("Listening on {:?}:1234", ip_addr);
-
         if let Err(e) = socket.accept(1234).await {
-            warn!("accept error: {:?}", e);
+            warn!("Accept error: {:?}", e);
             continue;
         }
 

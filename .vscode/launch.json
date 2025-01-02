@@ -9,16 +9,15 @@
         "flashingConfig": {
           "flashingEnabled": true,
         },
-        "chip": "STM32F746ZGTx",
+        "chip": "STM32F407VETx",
         "wireProtocol": "Swd",
-        "speed": 1800,
         "connectUnderReset": true,
         "coreConfigs": [
           {
             "coreIndex": 0,
             "programBinary": "${workspaceRoot}/target/thumbv7em-none-eabihf/debug/openpsg",
             "rttEnabled": true,
-            "svdFile": "${workspaceRoot}/.vscode/STM32F746.svd",
+            "svdFile": "${workspaceRoot}/.vscode/STM32F407.svd",
           }
         ]
       }

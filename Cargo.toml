@@ -10,7 +10,7 @@ cortex-m-rt = "0.7.0"
 defmt = "0.3"
 defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
-embassy-stm32 = { version = "0.1.0", features = ["defmt", "stm32f746zg", "unstable-pac", "time-driver-any", "exti"]  }
+embassy-stm32 = { version = "0.1.0", features = ["defmt", "stm32f407ve", "unstable-pac", "time-driver-any", "exti"]  }
 embassy-sync = { version = "0.6.1", features = ["defmt"] }
 embassy-executor = { version = "0.6.3", features = ["task-arena-size-32768", "arch-cortex-m", "executor-thread", "defmt", "integrated-timers"] }
 embassy-time = { version = "0.3.2", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
@@ -21,9 +21,9 @@ rand_core = "0.6.3"
 static_cell = "2"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde-json-core = "0.6.0"
-embedded-jsonrpc = { path = "/home/damian/workspace/OpenPSG/embedded-jsonrpc", features = ["defmt"] }
+embedded-jsonrpc = { version = "0.8", features = ["defmt"] }
 adler = { version = "1.0.2", default-features = false }
-heapless = { version = "0.8.0", features = ["serde"] }
+heapless = { version = "0.8.0", features = ["defmt-03", "serde"] }
 embedded-hal-async = "1.0.0"
 embedded-hal = "1.0.0"
 byteorder = {version = "1.5.0", default-features = false}
@@ -34,3 +34,13 @@ rfc3339 = { version = "0.1.0", default-features = false }
 name = "openpsg"
 test = false
 bench = false
+
+[profile.dev]
+opt-level = "z"
+lto = true
+codegen-units = 1
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
