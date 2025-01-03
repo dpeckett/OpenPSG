@@ -29,6 +29,7 @@ embedded-hal = "1.0.0"
 byteorder = {version = "1.5.0", default-features = false}
 sntpc = { git = "https://github.com/OpenPSG/sntpc.git", branch = "add-defmt-logging", default-features = false, features = ["defmt", "embassy-socket"] }
 rfc3339 = { version = "0.1.0", default-features = false }
+chrono = { version = "^0.4", default-features = false}
 
 [[bin]]
 name = "openpsg"

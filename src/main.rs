@@ -2,8 +2,8 @@
 #![cfg_attr(not(test), no_main)]
 
 use crate::api::RpcHandler;
-use crate::embassy_sntpc::{set_time, TimestampGen};
 use crate::net_util::generate_mac_address;
+use crate::time::{get_time, init_time, set_time};
 use core::net::{IpAddr, SocketAddr};
 use core::option::Option::*;
 use core::result::Result::*;
@@ -25,8 +25,8 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 mod api;
-mod embassy_sntpc;
 mod net_util;
+mod time;
 
 bind_interrupts!(struct Irqs {
     ETH => eth::InterruptHandler;
@@ -73,16 +73,20 @@ async fn timesync_task(stack: Stack<'static>) -> ! {
     loop {
         match sntpc::get_time(ntp_addr, &socket, context).await {
             Ok(time) => {
-                set_time(time);
+                let seconds = time.sec() as u64;
+                let micros =
+                    (u64::from(time.sec_fraction()) * 1_000_000 / u64::from(u32::MAX)) as u32;
 
-                info!("Time synchronized: {:?}", time);
+                set_time(seconds, micros).unwrap();
+
+                debug!("Time synchronized: {:?}", time);
             }
             Err(err) => {
                 error!("Time synchronization error: {:?}", err);
             }
         }
 
-        Timer::after(Duration::from_secs(30)).await;
+        Timer::after(Duration::from_secs(20)).await;
     }
 }
 
@@ -176,14 +180,16 @@ async fn main(spawner: Spawner) -> ! {
         config.rcc.apb1_pre = APBPrescaler::DIV4;
         config.rcc.apb2_pre = APBPrescaler::DIV2;
         config.rcc.sys = Sysclk::PLL1_P;
+        config.rcc.ls = LsConfig::default_lse();
     }
 
     debug!("Initializing clocks...");
 
-    let p = embassy_stm32::init(config); 
-
+    let p = embassy_stm32::init(config);
 
     // Initialize peripherals
+    init_time(p.RTC);
+
     /*
         static ADC: StaticCell<
             Mutex<
@@ -215,7 +221,7 @@ async fn main(spawner: Spawner) -> ! {
         static CHUNK_SIZE: StaticCell<Mutex<ThreadModeRawMutex, usize>> = StaticCell::new();
         let chunk_size = CHUNK_SIZE.init(Mutex::new(DEFAULT_ADC_CHUNK_SIZE));
     */
-    
+
     // Generate random seed.
     debug!("Generating random ethernet seed...");
     let mut rng = Rng::new(p.RNG, Irqs);
@@ -278,7 +284,7 @@ async fn main(spawner: Spawner) -> ! {
     rpc_server
         .register_handler("openpsg.*", rpc_handler)
         .unwrap();
-    
+
     /*
         static ADC_CONFIGURE_HANDLER: StaticCell<AdcHandler> = StaticCell::new();
         let adc_configure_handler = {
@@ -326,5 +332,25 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         info!("Connection closed");
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct TimestampGen {
+    now: u64,
+    now_micros: u32,
+}
+
+impl sntpc::NtpTimestampGenerator for TimestampGen {
+    fn init(&mut self) {
+        (self.now, self.now_micros) = get_time().unwrap();
+    }
+
+    fn timestamp_sec(&self) -> u64 {
+        self.now
+    }
+
+    fn timestamp_subsec_micros(&self) -> u32 {
+        self.now_micros
     }
 }

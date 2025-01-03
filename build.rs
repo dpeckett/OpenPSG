@@ -2,7 +2,6 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     // Put `memory.x` in our output directory and ensure it's
@@ -32,11 +31,4 @@ fn main() {
 
     // Add support for defmt.
     println!("cargo:rustc-link-arg=-Tdefmt.x");
-
-    // Calculate current time as UNIX timestamp
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let epoch_offset = now.as_secs();
-
-    // Pass this value to the compiler as an environment variable
-    println!("cargo:rustc-env=UNIX_EPOCH_OFFSET={}", epoch_offset);
 }

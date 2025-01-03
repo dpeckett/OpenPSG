@@ -34,7 +34,7 @@ enum Unit {
 }
 
 impl Unit {
-    fn to_string(&self) -> &'static str {
+    fn to_string(self) -> &'static str {
         match self {
             Unit::Microvolts => "uV",
             Unit::Millivolts => "mV",
@@ -110,7 +110,7 @@ impl<'de> serde::Deserialize<'de> for FilterList {
             let unit_str = frequency_and_unit
                 .next()
                 .ok_or_else(|| serde::de::Error::custom("missing unit"))?;
-            
+
             let frequency = frequency_str
                 .parse::<f32>()
                 .map_err(|_| serde::de::Error::custom("invalid frequency"))?;
@@ -118,7 +118,11 @@ impl<'de> serde::Deserialize<'de> for FilterList {
             let unit: Unit = unit_str.into();
 
             filters
-                .push(Filter { kind, unit, frequency })
+                .push(Filter {
+                    kind,
+                    unit,
+                    frequency,
+                })
                 .map_err(|_| serde::de::Error::custom("too many filters"))?;
         }
 
@@ -139,12 +143,19 @@ impl serde::Serialize for FilterList {
             let mut filter_str: String<16> = String::new();
             core::fmt::write(
                 &mut filter_str,
-                format_args!("{}:{:.2}{}", kind_str, filter.frequency, filter.unit.to_string()),
+                format_args!(
+                    "{}:{:.2}{}",
+                    kind_str,
+                    filter.frequency,
+                    filter.unit.to_string()
+                ),
             )
             .map_err(|_| serde::ser::Error::custom("formatting error"))?;
 
             if !filters_str.is_empty() {
-                filters_str.push(' ').map_err(|_| serde::ser::Error::custom("too many filters"))?;
+                filters_str
+                    .push(' ')
+                    .map_err(|_| serde::ser::Error::custom("too many filters"))?;
             }
 
             filters_str
