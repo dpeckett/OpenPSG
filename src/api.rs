@@ -1,5 +1,7 @@
+use crate::ncpt;
+use crate::task::TaskSignal;
 use core::fmt::Debug;
-use embassy_executor::SendSpawner;
+use defmt::warn;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::signal::Signal as EmbassySignal;
 use embedded_jsonrpc::{
@@ -8,14 +10,15 @@ use embedded_jsonrpc::{
 };
 use heapless::String;
 use heapless::Vec;
+use rfc3339::Timestamp;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
 /// The transducer type used to measure a signal.
 #[derive(Debug, Deserialize, Serialize)]
 enum TransducerType {
-    #[serde(rename = "AgAgCl electrode")]
-    AgAgClElectrode,
+    #[serde(rename = "MEMSPressureTransducer")]
+    MEMSPressureTransducer,
 }
 
 /// The unit of a signal.
@@ -31,6 +34,8 @@ enum Unit {
     Hertz,
     #[serde(rename = "kHz")]
     Kilohertz,
+    #[serde(rename = "Pa")]
+    Pascals,
 }
 
 impl Unit {
@@ -41,6 +46,7 @@ impl Unit {
             Unit::Volts => "V",
             Unit::Hertz => "Hz",
             Unit::Kilohertz => "kHz",
+            Unit::Pascals => "Pa",
         }
     }
 }
@@ -53,6 +59,7 @@ impl From<&str> for Unit {
             "V" => Unit::Volts,
             "Hz" => Unit::Hertz,
             "kHz" => Unit::Kilohertz,
+            "Pa" => Unit::Pascals,
             _ => panic!("unknown unit"),
         }
     }
@@ -167,7 +174,7 @@ impl serde::Serialize for FilterList {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 struct Signal<'a> {
     /// The unique identifier of the signal.
     id: u32,
@@ -189,16 +196,31 @@ struct Signal<'a> {
     sample_rate: u32,
 }
 
-pub(crate) struct RpcHandler {
-    spawner: SendSpawner,
-    cancellation_signals: [EmbassySignal<ThreadModeRawMutex, ()>; 1],
+/// The values of a signal at a given timestamp.
+#[derive(Debug, Serialize)]
+pub struct SignalValues<'a, T: Serialize> {
+    /// The unique identifier of the signal these values belong to.
+    pub id: u32,
+    /// The start timestamp of the values.
+    pub timestamp: Timestamp,
+    /// The list of values.
+    pub values: &'a [T],
+}
+
+pub struct RpcHandler {
+    ncpt_sampling_task_signals:
+        &'static EmbassySignal<ThreadModeRawMutex, TaskSignal>,
 }
 
 impl RpcHandler {
-    pub(crate) fn new(spawner: SendSpawner) -> Self {
+    pub fn new(
+        ncpt_sampling_task_signals: &'static EmbassySignal<
+            ThreadModeRawMutex,
+            TaskSignal,
+        >,
+    ) -> Self {
         Self {
-            spawner,
-            cancellation_signals: [EmbassySignal::new()],
+            ncpt_sampling_task_signals,
         }
     }
 
@@ -208,33 +230,28 @@ impl RpcHandler {
         response_json: &'a mut [u8],
     ) -> Result<usize, RpcError> {
         let signals: [Signal; 1] = [Signal {
-            id: 1,
-            name: "ECG Lead I",
-            transducer_type: TransducerType::AgAgClElectrode,
-            unit: Unit::Millivolts,
-            min: -10.0,
-            max: 10.0,
+            id: ncpt::NCPT_SIGNAL_ID,
+            name: "Nasal Pressure",
+            transducer_type: TransducerType::MEMSPressureTransducer,
+            unit: Unit::Pascals,
+            min: -200.0,
+            max: 200.0,
             prefiltering: FilterList {
                 filters: Vec::from_slice(&[
                     Filter {
                         kind: FilterKind::HighPass,
                         unit: Unit::Hertz,
-                        frequency: 0.5,
-                    },
-                    Filter {
-                        kind: FilterKind::LowPass,
-                        unit: Unit::Hertz,
-                        frequency: 100.0,
+                        frequency: 0.1,
                     },
                     Filter {
                         kind: FilterKind::Notch,
                         unit: Unit::Hertz,
-                        frequency: 50.0,
+                        frequency: 4.0,
                     },
                 ])
                 .unwrap(),
             },
-            sample_rate: 250,
+            sample_rate: 40,
         }];
 
         let response: RpcResponse<&[Signal]> = RpcResponse {
@@ -253,18 +270,28 @@ impl RpcHandler {
         request_json: &'a [u8],
         response_json: &'a mut [u8],
     ) -> Result<usize, RpcError> {
-        let signal_ids: Vec<u32, 1> = match serde_json_core::from_slice(request_json) {
+        #[derive(Debug, Deserialize, defmt::Format)]
+        struct SignalIdsRequest {
+            #[serde(rename = "params")]
+            signal_ids: Vec<u32, 1>,
+        }
+
+        let request: SignalIdsRequest = match serde_json_core::from_slice(request_json) {
             Ok((request, _remainder)) => request,
             Err(_) => {
+                warn!("Unable to parse request");
                 return Err(RpcErrorCode::InvalidParams.into());
             }
         };
 
-        if signal_ids.len() != 1 || signal_ids[0] != 1 {
+        if request.signal_ids.len() != 1 || request.signal_ids[0] != 1 {
+            warn!("Invalid request: {}", request);
             return Err(RpcErrorCode::InvalidParams.into());
         }
 
-        // TODO: spawn sampling tasks (if not already running).
+        // Start sampling.
+        self.ncpt_sampling_task_signals
+            .signal(TaskSignal::Start);
 
         let response: RpcResponse<'static, ()> = RpcResponse {
             jsonrpc: JSONRPC_VERSION,
@@ -282,21 +309,28 @@ impl RpcHandler {
         request_json: &'a [u8],
         response_json: &'a mut [u8],
     ) -> Result<usize, RpcError> {
-        let signal_ids: Vec<u32, 1> = match serde_json_core::from_slice(request_json) {
+        #[derive(Debug, Deserialize, defmt::Format)]
+        struct SignalIdsRequest {
+            #[serde(rename = "params")]
+            signal_ids: Vec<u32, 1>,
+        }
+
+        let request: SignalIdsRequest = match serde_json_core::from_slice(request_json) {
             Ok((request, _remainder)) => request,
             Err(_) => {
+                warn!("Unable to parse request");
                 return Err(RpcErrorCode::InvalidParams.into());
             }
         };
 
-        if signal_ids.len() != 1 || signal_ids[0] != 1 {
+        if request.signal_ids.len() != 1 || request.signal_ids[0] != 1 {
+            warn!("Invalid request: {}", request);
             return Err(RpcErrorCode::InvalidParams.into());
         }
 
         // Stop sampling.
-        for id in signal_ids {
-            self.cancellation_signals[id as usize].signal(());
-        }
+        self.ncpt_sampling_task_signals
+            .signal(TaskSignal::Stop);
 
         let response: RpcResponse<'static, ()> = RpcResponse {
             jsonrpc: JSONRPC_VERSION,

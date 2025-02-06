@@ -8,16 +8,22 @@ use embassy_sync::blocking_mutex::{raw::ThreadModeRawMutex, Mutex};
 static RTC: Mutex<ThreadModeRawMutex, RefCell<Option<Rtc>>> = Mutex::new(RefCell::new(None));
 static MICROS_OFFSET: Mutex<ThreadModeRawMutex, RefCell<u32>> = Mutex::new(RefCell::new(0));
 
+/// A timespec structure representing a time in seconds and microseconds.
+pub struct Timespec {
+    pub seconds: u64,
+    pub micros: u32,
+}
+
 /// Initialize the real-time clock peripheral (RTC).
-pub(crate) fn init_time(rtc: impl embassy_stm32::Peripheral<P = embassy_stm32::peripherals::RTC>) {
+pub fn init_time(rtc: impl embassy_stm32::Peripheral<P = embassy_stm32::peripherals::RTC>) {
     RTC.lock(|rc| {
         *rc.borrow_mut() = Some(Rtc::new(rtc, RtcConfig::default()));
     });
 }
 
 /// Set the current time of the RTC from a unix epoch timestamp.
-pub(crate) fn set_time(seconds: u64, micros: u32) -> Result<(), RtcError> {
-    let datetime = chrono::DateTime::from_timestamp(seconds as i64, micros * 1000)
+pub fn clock_settime(tp: &Timespec) -> Result<(), RtcError> {
+    let datetime = chrono::DateTime::from_timestamp(tp.seconds as i64, tp.micros * 1000)
         .unwrap()
         .naive_utc();
     let date = datetime.date();
@@ -51,7 +57,7 @@ pub(crate) fn set_time(seconds: u64, micros: u32) -> Result<(), RtcError> {
             // set_datetime() clears the subsecond time register, so store
             // a copy of the microseconds offset.
             MICROS_OFFSET.lock(|micros_offset| {
-                *micros_offset.borrow_mut() = micros;
+                *micros_offset.borrow_mut() = tp.micros;
             });
         } else {
             return Err(RtcError::NotRunning);
@@ -62,8 +68,8 @@ pub(crate) fn set_time(seconds: u64, micros: u32) -> Result<(), RtcError> {
 }
 
 /// Get the current time of the RTC as a unix epoch timestamp.
-pub(crate) fn get_time() -> Result<(u64, u32), RtcError> {
-    RTC.lock(|rc| -> Result<(u64, u32), RtcError> {
+pub fn clock_gettime() -> Result<Timespec, RtcError> {
+    RTC.lock(|rc| -> Result<Timespec, RtcError> {
         if let Some(rtc) = &*rc.borrow() {
             let now = rtc.now()?;
             let now_micros = get_rtc_micros() as i64;
@@ -87,7 +93,10 @@ pub(crate) fn get_time() -> Result<(u64, u32), RtcError> {
             let seconds = naive_date_time.and_utc().timestamp();
             let micros = naive_date_time.and_utc().timestamp_subsec_micros() % 1_000_000;
 
-            Ok((seconds as u64, micros))
+            Ok(Timespec {
+                seconds: seconds as u64,
+                micros,
+            })
         } else {
             Err(RtcError::NotRunning)
         }

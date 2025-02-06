@@ -2,13 +2,15 @@
 #![cfg_attr(not(test), no_main)]
 
 use crate::api::RpcHandler;
+use crate::cs1237::{Channel, Config as Cs1237Config, Cs1237, Gain, SamplesPerSecond};
 use crate::net_util::generate_mac_address;
-use crate::time::{get_time, init_time, set_time};
+use crate::task::TaskSignal;
+use crate::time::{clock_gettime, clock_settime, init_time, Timespec};
 use core::net::{IpAddr, SocketAddr};
 use core::option::Option::*;
 use core::result::Result::*;
 use defmt::{debug, error, info, warn};
-use embassy_executor::{SendSpawner, Spawner};
+use embassy_executor::Spawner;
 use embassy_net::tcp::{Error as TcpReadError, TcpSocket};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{Stack, StackResources};
@@ -18,6 +20,8 @@ use embassy_stm32::peripherals::ETH;
 use embassy_stm32::rng::Rng;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, eth, peripherals, rng, Config};
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::signal::Signal as EmbassySignal;
 use embassy_time::{Duration, Timer};
 use embedded_jsonrpc::RpcServer;
 use rand_core::RngCore;
@@ -25,7 +29,11 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 mod api;
+mod biquad_filter;
+mod cs1237;
 mod net_util;
+mod ncpt;
+mod task;
 mod time;
 
 bind_interrupts!(struct Irqs {
@@ -73,11 +81,12 @@ async fn timesync_task(stack: Stack<'static>) -> ! {
     loop {
         match sntpc::get_time(ntp_addr, &socket, context).await {
             Ok(time) => {
-                let seconds = time.sec() as u64;
-                let micros =
-                    (u64::from(time.sec_fraction()) * 1_000_000 / u64::from(u32::MAX)) as u32;
-
-                set_time(seconds, micros).unwrap();
+                clock_settime(&Timespec {
+                    seconds: time.sec() as u64,
+                    micros: (u64::from(time.sec_fraction()) * 1_000_000 / u64::from(u32::MAX))
+                        as u32,
+                })
+                .unwrap();
 
                 debug!("Time synchronized: {:?}", time);
             }
@@ -89,73 +98,6 @@ async fn timesync_task(stack: Stack<'static>) -> ! {
         Timer::after(Duration::from_secs(20)).await;
     }
 }
-
-/*
-const DEFAULT_ADC_CHUNK_SIZE: usize = 32;
-const MAX_ADC_CHUNK_SIZE: usize = 256;
-
-#[embassy_executor::task]
-async fn adc_sampling_task(
-    rpc_server: &'static RpcServer<'static, TcpReadError>,
-    adc: &'static Mutex<
-        ThreadModeRawMutex,
-        Cs1237<
-            'static,
-            peripherals::SPI1,
-            peripherals::DMA2_CH3,
-            peripherals::DMA2_CH2,
-            peripherals::PA6,
-        >,
-    >,
-    sampling_enabled: &'static Mutex<ThreadModeRawMutex, bool>,
-    chunk_size: &'static Mutex<ThreadModeRawMutex, usize>,
-) {
-    let mut samples = Vec::<i32, MAX_ADC_CHUNK_SIZE>::new();
-    loop {
-        {
-            let sampling_enabled = { *sampling_enabled.lock().await };
-
-            if !sampling_enabled {
-                embassy_time::Timer::after(embassy_time::Duration::from_millis(100)).await;
-                continue;
-            }
-        }
-
-        samples.clear();
-
-        let size = *chunk_size.lock().await; // Get the current chunk size
-
-        {
-            let mut adc = adc.lock().await;
-
-            for _ in 0..size {
-                match adc.read().await {
-                    Ok(value) => samples.push(value).unwrap_or(()),
-                    Err(e) => {
-                        warn!("ADC read error: {:?}", e);
-                        samples.push(0).unwrap_or(());
-                    }
-                }
-            }
-        }
-
-        let notification: RpcRequest<'_, &[i32]> = RpcRequest {
-            jsonrpc: JSONRPC_VERSION,
-            id: None,
-            method: "adc.samples",
-            params: Some(&samples),
-        };
-
-        let mut notification_json = [0u8; 512];
-        let notification_len =
-            serde_json_core::to_slice(&notification, &mut notification_json).unwrap();
-
-        rpc_server
-            .notify(&notification_json[..notification_len])
-            .await
-            .unwrap();
-    }
-}*/
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
@@ -188,39 +130,25 @@ async fn main(spawner: Spawner) -> ! {
     let p = embassy_stm32::init(config);
 
     // Initialize peripherals
+    let ncpt_adc = Cs1237::try_new(
+        p.SPI1,
+        p.PA5,
+        p.PA6,
+        p.DMA2_CH3,
+        p.DMA2_CH2,
+        p.EXTI6,
+        Cs1237Config {
+            sample_rate: SamplesPerSecond::SPS40,
+            gain: Gain::G128,
+            channel: Channel::ChannelA,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Initialize the RTC.
+    debug!("Initializing RTC...");
     init_time(p.RTC);
-
-    /*
-        static ADC: StaticCell<
-            Mutex<
-                ThreadModeRawMutex,
-                Cs1237<
-                    'static,
-                    peripherals::SPI1,
-                    peripherals::DMA2_CH3,
-                    peripherals::DMA2_CH2,
-                    peripherals::PA6,
-                >,
-            >,
-        > = StaticCell::new();
-
-        let mut adc_config = Cs1237Config::default();
-        adc_config.sample_rate = SamplesPerSecond::SPS640;
-
-        let adc = &*ADC.init(Mutex::new(
-            Cs1237::try_new(
-                p.SPI1, p.PA5, p.PA6, p.DMA2_CH3, p.DMA2_CH2, p.EXTI6, adc_config,
-            )
-            .await
-            .unwrap(),
-        ));
-
-        static SAMPLING_ENABLED: StaticCell<Mutex<ThreadModeRawMutex, bool>> = StaticCell::new();
-        let sampling_enabled = SAMPLING_ENABLED.init(Mutex::new(true));
-
-        static CHUNK_SIZE: StaticCell<Mutex<ThreadModeRawMutex, usize>> = StaticCell::new();
-        let chunk_size = CHUNK_SIZE.init(Mutex::new(DEFAULT_ADC_CHUNK_SIZE));
-    */
 
     // Generate random seed.
     debug!("Generating random ethernet seed...");
@@ -276,38 +204,31 @@ async fn main(spawner: Spawner) -> ! {
     static RPC_SERVER: StaticCell<RpcServer<'static, TcpReadError>> = StaticCell::new();
     let rpc_server = RPC_SERVER.init_with(RpcServer::new);
 
+    // Task signals.
+    static NCPT_SAMPLING_TASK_SIGNALS: StaticCell<
+        EmbassySignal<ThreadModeRawMutex, TaskSignal>,
+    > = StaticCell::new();
+    let ncpt_sampling_task_signals =
+        NCPT_SAMPLING_TASK_SIGNALS.init_with(EmbassySignal::new);
+
     // Register handlers.
     static RPC_HANDLER: StaticCell<RpcHandler> = StaticCell::new();
-    let send_spawner = SendSpawner::for_current_executor().await;
-    let rpc_handler = RPC_HANDLER.init_with(|| RpcHandler::new(send_spawner));
+    let rpc_handler =
+        RPC_HANDLER.init_with(|| RpcHandler::new(ncpt_sampling_task_signals));
 
     rpc_server
         .register_handler("openpsg.*", rpc_handler)
         .unwrap();
 
-    /*
-        static ADC_CONFIGURE_HANDLER: StaticCell<AdcHandler> = StaticCell::new();
-        let adc_configure_handler = {
-            let adc = &*adc;
-            let sampling_enabled = &*sampling_enabled;
-            let chunk_size = &*chunk_size;
-            ADC_CONFIGURE_HANDLER.init_with(|| AdcHandler { adc, sampling_enabled, chunk_size })
-        };
+    // Launch pressure transducer sampling task.
+    spawner
+        .spawn(ncpt::sample(
+            rpc_server,
+            ncpt_sampling_task_signals,
+            ncpt_adc,
+        ))
+        .unwrap();
 
-        rpc_server
-            .register_method("adc.configure", adc_configure_handler)
-            .unwrap();
-    */
-
-    // Launch ADC reading task.
-    /*  spawner.spawn(adc_sampling_task(
-        rpc_server,
-        adc,
-        sampling_enabled,
-        chunk_size
-    )).unwrap();*/
-
-    // Then we can use it!
     let mut rx_buffer = [0; 128]; // Received commands are nice and small.
     let mut tx_buffer = [0; 1460]; // One Ethernet frame worth of data.
 
@@ -343,7 +264,9 @@ struct TimestampGen {
 
 impl sntpc::NtpTimestampGenerator for TimestampGen {
     fn init(&mut self) {
-        (self.now, self.now_micros) = get_time().unwrap();
+        let tp = clock_gettime().unwrap();
+        self.now = tp.seconds;
+        self.now_micros = tp.micros;
     }
 
     fn timestamp_sec(&self) -> u64 {

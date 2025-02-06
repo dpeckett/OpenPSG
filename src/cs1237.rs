@@ -1,9 +1,9 @@
 use byteorder::{BigEndian, ByteOrder};
 use defmt::*;
 use embassy_stm32::exti::{Channel as ExtiChannel, ExtiInput};
-use embassy_stm32::gpio::{Flex, Input, Level, Output, Pull, Speed};
+use embassy_stm32::gpio::{Flex, Level, Output, Pull, Speed};
 use embassy_stm32::spi::{Config as SpiConfig, Instance, MisoPin, RxDma, SckPin, Spi, TxDma};
-use embassy_stm32::Peripheral;
+use embassy_stm32::{mode, Peripheral};
 use embassy_time::{with_timeout, Duration, Timer};
 
 /// Sampling rates for the CS1237 ADC.
@@ -62,27 +62,19 @@ pub enum Error {
 }
 
 /// CS1237 ADC interface.
-pub struct Cs1237<
-    'd,
-    SpiInstance: Instance,
-    Tx: TxDma<SpiInstance>,
-    Rx: RxDma<SpiInstance>,
-    DataPin: MisoPin<SpiInstance>,
-> {
-    spi_dev: Spi<'d, SpiInstance, Tx, Rx>,
-    drdy_pin: ExtiInput<'d, DataPin>,
+pub struct Cs1237<'d> {
+    spi_dev: Spi<'d, mode::Async>,
+    drdy_pin: ExtiInput<'d>,
 }
 
-impl<
-        'd,
+impl<'d> Cs1237<'d> {
+    /// Initializes a new CS1237 ADC interface.
+    pub async fn try_new<
         SpiInstance: Instance,
         Tx: TxDma<SpiInstance>,
         Rx: RxDma<SpiInstance>,
         DataPin: MisoPin<SpiInstance>,
-    > Cs1237<'d, SpiInstance, Tx, Rx, DataPin>
-{
-    /// Initializes a new CS1237 ADC interface.
-    pub async fn try_new(
+    >(
         spi: impl Peripheral<P = SpiInstance> + 'd,
         clk: impl Peripheral<P = impl SckPin<SpiInstance>> + 'd,
         data: DataPin,
@@ -92,8 +84,9 @@ impl<
         config: Config,
     ) -> Result<Self, Error> {
         let mut drdy_pin = ExtiInput::new(
-            Input::new(unsafe { Peripheral::clone_unchecked(&data) }, Pull::None),
+            unsafe { Peripheral::clone_unchecked(&data) },
             interrupt_channel,
+            Pull::None,
         );
 
         {

@@ -80,7 +80,6 @@ https://www.cfsensor.cn/proinfo/6.html
 ##### Results
 
 * HX710x is too slow (40SPS max).
-* 
 
 #### NAU7802
 
