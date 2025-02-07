@@ -31,8 +31,8 @@ use {defmt_rtt as _, panic_probe as _};
 mod api;
 mod biquad_filter;
 mod cs1237;
-mod net_util;
 mod ncpt;
+mod net_util;
 mod task;
 mod time;
 
@@ -205,16 +205,13 @@ async fn main(spawner: Spawner) -> ! {
     let rpc_server = RPC_SERVER.init_with(RpcServer::new);
 
     // Task signals.
-    static NCPT_SAMPLING_TASK_SIGNALS: StaticCell<
-        EmbassySignal<ThreadModeRawMutex, TaskSignal>,
-    > = StaticCell::new();
-    let ncpt_sampling_task_signals =
-        NCPT_SAMPLING_TASK_SIGNALS.init_with(EmbassySignal::new);
+    static NCPT_SAMPLING_TASK_SIGNALS: StaticCell<EmbassySignal<ThreadModeRawMutex, TaskSignal>> =
+        StaticCell::new();
+    let ncpt_sampling_task_signals = NCPT_SAMPLING_TASK_SIGNALS.init_with(EmbassySignal::new);
 
     // Register handlers.
     static RPC_HANDLER: StaticCell<RpcHandler> = StaticCell::new();
-    let rpc_handler =
-        RPC_HANDLER.init_with(|| RpcHandler::new(ncpt_sampling_task_signals));
+    let rpc_handler = RPC_HANDLER.init_with(|| RpcHandler::new(ncpt_sampling_task_signals));
 
     rpc_server
         .register_handler("openpsg.*", rpc_handler)
@@ -237,7 +234,7 @@ async fn main(spawner: Spawner) -> ! {
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
         socket.set_keep_alive(Some(embassy_time::Duration::from_secs(5)));
 
-        if let Err(e) = socket.accept(1234).await {
+        if let Err(e) = socket.accept(80).await {
             warn!("Accept error: {:?}", e);
             continue;
         }

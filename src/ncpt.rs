@@ -17,7 +17,7 @@ pub(crate) const NCPT_SIGNAL_ID: u32 = 1;
 const SAMPLES_PER_SECOND: usize = 40;
 
 // Filter out DC offset, params f0=0.1Hz. This will take ~10s to settle.
-const DC_REJECTION_HIGHPASS_FILTER_0_1HZ_NUMERATOR: [f32; 3] = [0.98895425, -1.9779085,   0.98895425];
+const DC_REJECTION_HIGHPASS_FILTER_0_1HZ_NUMERATOR: [f32; 3] = [0.98895425, -1.9779085, 0.98895425];
 const DC_REJECTION_HIGHPASS_FILTER_0_1HZ_DENOMINATOR: [f32; 3] = [1.0, -1.97778648, 0.97803051];
 
 // There seems to be some aliasing of mains hum (50Hz) at ~4Hz, this will likely
@@ -65,7 +65,7 @@ pub async fn sample(
                         // Scale the samples into a 16bit value representing the range -200Pa to 200Pa.
                         // This is the EDF sample value format.
                         for (i, sample) in samples.iter().enumerate() {
-                            // 10.4KPa is the full scale range of the pressure transducer 
+                            // 10.4KPa is the full scale range of the pressure transducer
                             // at this gain setting.
                             let mut pressure_pa: f32 = 10_400.0 * (*sample as f32 / I24_MAX as f32);
 
@@ -85,7 +85,7 @@ pub async fn sample(
                             values: &scaled_samples,
                         };
 
-                        let notification: RpcRequest<&SignalValues<_>> = RpcRequest {
+                        let notification: RpcRequest<&SignalValues> = RpcRequest {
                             jsonrpc: JSONRPC_VERSION,
                             id: None,
                             method: "openpsg.values",

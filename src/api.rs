@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// The transducer type used to measure a signal.
 #[derive(Debug, Deserialize, Serialize)]
 enum TransducerType {
-    #[serde(rename = "MEMSPressureTransducer")]
+    #[serde(rename = "MEMS Pressure Transducer")]
     MEMSPressureTransducer,
 }
 
@@ -198,26 +198,22 @@ struct Signal<'a> {
 
 /// The values of a signal at a given timestamp.
 #[derive(Debug, Serialize)]
-pub struct SignalValues<'a, T: Serialize> {
+pub struct SignalValues<'a> {
     /// The unique identifier of the signal these values belong to.
     pub id: u32,
     /// The start timestamp of the values.
     pub timestamp: Timestamp,
     /// The list of values.
-    pub values: &'a [T],
+    pub values: &'a [i16],
 }
 
 pub struct RpcHandler {
-    ncpt_sampling_task_signals:
-        &'static EmbassySignal<ThreadModeRawMutex, TaskSignal>,
+    ncpt_sampling_task_signals: &'static EmbassySignal<ThreadModeRawMutex, TaskSignal>,
 }
 
 impl RpcHandler {
     pub fn new(
-        ncpt_sampling_task_signals: &'static EmbassySignal<
-            ThreadModeRawMutex,
-            TaskSignal,
-        >,
+        ncpt_sampling_task_signals: &'static EmbassySignal<ThreadModeRawMutex, TaskSignal>,
     ) -> Self {
         Self {
             ncpt_sampling_task_signals,
@@ -290,8 +286,7 @@ impl RpcHandler {
         }
 
         // Start sampling.
-        self.ncpt_sampling_task_signals
-            .signal(TaskSignal::Start);
+        self.ncpt_sampling_task_signals.signal(TaskSignal::Start);
 
         let response: RpcResponse<'static, ()> = RpcResponse {
             jsonrpc: JSONRPC_VERSION,
@@ -329,8 +324,7 @@ impl RpcHandler {
         }
 
         // Stop sampling.
-        self.ncpt_sampling_task_signals
-            .signal(TaskSignal::Stop);
+        self.ncpt_sampling_task_signals.signal(TaskSignal::Stop);
 
         let response: RpcResponse<'static, ()> = RpcResponse {
             jsonrpc: JSONRPC_VERSION,
