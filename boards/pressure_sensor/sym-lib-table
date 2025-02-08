@@ -1,0 +1,5 @@
+(sym_lib_table
+  (lib (name "LAN8742A-CZ-TR")(type "KiCad")(uri "${KIPRJMOD}/../libraries/symbols/LAN8742A-CZ-TR.kicad_sym")(options "")(descr ""))
+  (lib (name "TPS23758RJJR")(type "KiCad")(uri "${KIPRJMOD}/../libraries/symbols/TPS23758RJJR.kicad_sym")(options "")(descr ""))
+  (lib (name "CS1237")(type "KiCad")(uri "${KIPRJMOD}/../libraries/symbols/CS1237.kicad_sym")(options "")(descr ""))
+)
