@@ -239,7 +239,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "pressure_sensor.kicad_pro",
+    "filename": "poe_splitter.kicad_pro",
     "version": 1
   },
   "net_settings": {
@@ -318,7 +318,7 @@
   },
   "sheets": [
     [
-      "68359dc5-e155-4227-857f-ddcacb411415",
+      "ccfddb68-52b0-4946-a753-71cfc79c2588",
       ""
     ]
   ],

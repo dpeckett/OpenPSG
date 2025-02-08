@@ -45,7 +45,7 @@ http://www.unisense.com.tw/product%20info.php
 
 https://www.cfsensor.cn/proinfo/6.html
 
-#### XGZP040
+#### XGZP040 / GZP160-040S / XGZP160040S
 
 40 KPa MEMs pressure sensor.
 
